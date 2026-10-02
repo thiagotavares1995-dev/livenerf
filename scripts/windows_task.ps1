@@ -1,6 +1,7 @@
 # Register, remove or inspect the daily livenerf task on Windows.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\windows_task.ps1 install
+#   powershell -ExecutionPolicy Bypass -File scripts\windows_task.ps1 install -At 11:07 -Hours 9   # another start time, retries within the same UTC day
 #   powershell -ExecutionPolicy Bypass -File scripts\windows_task.ps1 status
 #   powershell -ExecutionPolicy Bypass -File scripts\windows_task.ps1 disable
 #   powershell -ExecutionPolicy Bypass -File scripts\windows_task.ps1 uninstall
@@ -13,7 +14,9 @@
 # Output goes to logs\daily.log and logs\daily.jsonl.
 
 param(
-    [Parameter(Position = 0)][ValidateSet("install", "status", "disable", "enable", "uninstall")][string]$Command = "status"
+    [Parameter(Position = 0)][ValidateSet("install", "status", "disable", "enable", "uninstall")][string]$Command = "status",
+    [string]$At = "05:07",  # daily start time (local); the original series uses 05:07
+    [int]$Hours = 18  # hourly retries after $At; keep $At + $Hours before the next UTC midnight (livenerf.daily counts days in UTC)
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,8 +30,8 @@ switch ($Command) {
         New-Item -ItemType Directory -Force (Join-Path $Repo "logs") | Out-Null
         $inner = "`"$Python`" -m livenerf.daily >> logs\daily.log 2>&1"
         $action = New-ScheduledTaskAction -Execute "conhost.exe" -Argument "--headless cmd.exe /c $inner" -WorkingDirectory $Repo
-        $trigger = New-ScheduledTaskTrigger -Daily -At "05:07"
-        $repeat = New-ScheduledTaskTrigger -Once -At "05:07" -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Hours 18)
+        $trigger = New-ScheduledTaskTrigger -Daily -At $At
+        $repeat = New-ScheduledTaskTrigger -Once -At $At -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Hours $Hours)
         $trigger.Repetition = $repeat.Repetition
         $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 55) `
             -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
@@ -36,7 +39,7 @@ switch ($Command) {
         $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
         Register-ScheduledTask -TaskName $Name -Action $action -Trigger $trigger -Settings $settings -Principal $principal `
             -Description "livenerf: one daily benchmark run against Claude Opus 5.5 ($Repo)" -Force | Out-Null
-        Write-Output "Registered '$Name': daily at 05:07, retrying hourly until 23:07 until the day's run is in."
+        Write-Output "Registered '$Name': daily at $At, retrying hourly for $Hours hours until the day's run is in."
     }
     "status" {
         $t = Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
